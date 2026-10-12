@@ -1,0 +1,29 @@
+# Core training and modelling stack.
+# Pinned to versions that work together as of late 2026; bump deliberately,
+# one package at a time, and record the bump in experiments/log_template.md.
+torch>=2.6.0
+transformers>=4.49.0
+accelerate>=1.4.0
+peft>=0.14.0
+trl>=0.15.0
+datasets>=3.3.0
+bitsandbytes>=0.45.0
+
+# Evaluation and metrics
+evaluate>=0.4.3
+scikit-learn>=1.6.0
+scipy>=1.15.0
+numpy>=1.26.0
+pandas>=2.2.0
+
+# Config, logging, plotting
+pyyaml>=6.0.2
+tqdm>=4.67.0
+wandb>=0.19.0
+matplotlib>=3.10.0
+seaborn>=0.13.2
+
+# Optional: fast batched generation for the rollout step.
+# Install separately if your GPU and CUDA version support it, since it pins
+# its own torch build:
+#   pip install vllm>=0.7.0

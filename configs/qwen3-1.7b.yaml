@@ -1,0 +1,73 @@
+# The 1.7B rung: where the reported effect peaks, so this is the most
+# important config in the repo.
+#
+# This file is a copy of default.yaml with ONLY the `models` block and the run
+# name changed. Resist the temptation to retune anything else here: if the
+# learning rate or the rollout count differs between rungs, the cross-scale
+# comparison is no longer apples to apples and NTR stops being interpretable.
+
+run_name: qwen3-1.7b-onpolicy-sd
+seed: 0
+output_dir: outputs/qwen3-1.7b-onpolicy-sd
+
+models:
+  base_id: Qwen/Qwen3-1.7B
+  student_id: outputs/qwen3-1.7b-safety-aligned
+  teacher_id: base
+  dtype: bfloat16
+  attn_implementation: sdpa
+  max_seq_len: 1024
+
+safety_align:
+  dataset_id: PKU-Alignment/PKU-SafeRLHF
+  split: train
+  n_examples: 8000
+  method: sft
+  epochs: 1
+  lr: 1.0e-5
+  batch_size: 8
+  grad_accum: 4
+
+distill:
+  prompt_sources:
+    - {id: openai/gsm8k, config: main, split: train, n: 2000, field: question}
+    - {id: tatsu-lab/alpaca, split: train, n: 2000, field: instruction}
+  rollouts_per_prompt: 4
+  temperature: 1.0
+  top_p: 0.95
+  max_new_tokens: 256
+  on_policy_fraction: 1.0
+  kl_direction: forward
+  kl_topk: 0
+  steps: 1500
+  lr: 5.0e-6
+  # Halved from the 0.6B rung only to fit memory; grad_accum is doubled so the
+  # effective batch size stays identical. This is the one permitted deviation.
+  batch_size: 2
+  grad_accum: 16
+  warmup_ratio: 0.03
+  max_grad_norm: 1.0
+  log_every: 25
+  save_every: 500
+  use_lora: true
+  lora_rank: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_targets: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+eval:
+  batch_size: 8
+  max_new_tokens: 320
+  temperature: 0.0
+  capability:
+    - {id: openai/gsm8k, config: main, split: test, n: 500, kind: exact_match}
+    - {id: cais/mmlu, config: all, split: test, n: 1000, kind: multiple_choice}
+    - {id: allenai/ai2_arc, config: ARC-Challenge, split: test, n: 500, kind: multiple_choice}
+  safety:
+    - {id: walledai/XSTest, split: train, n: 450, kind: over_refusal}
+    - {id: walledai/AdvBench, split: train, n: 520, kind: harmful_compliance}
+
+probes:
+  n_prompt_pairs: 256
+  layers: all
+  task_subspace_components: 8

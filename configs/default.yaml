@@ -1,0 +1,88 @@
+# Default configuration for one rung of the model-size ladder.
+# Copy this file per size and change only the `models` block. Everything else
+# stays fixed so that cross-scale comparisons are apples to apples.
+# scripts/run_ladder.sh looks for configs/<size-tag>.yaml, for example
+# configs/qwen3-1.7b.yaml, and falls back to this file when none exists.
+
+run_name: qwen3-0.6b-onpolicy-sd
+seed: 0
+output_dir: outputs/qwen3-0.6b-onpolicy-sd
+
+models:
+  # theta_base: the pre-alignment reference. It defines the capability ceiling
+  # that the safety tax is measured against, and it is also the teacher.
+  base_id: Qwen/Qwen3-0.6B
+  # theta_safe: produced by scripts/run_safety_align.sh from base_id.
+  # Point this at your own aligned checkpoint once stage 1 has run.
+  student_id: outputs/qwen3-0.6b-safety-aligned
+  # The teacher for self-distillation. "base" means theta_base (true
+  # self-distillation within one family). Override with an explicit HF id to
+  # run the teacher-student capacity-gap sweep.
+  teacher_id: base
+  dtype: bfloat16
+  attn_implementation: sdpa
+  max_seq_len: 1024
+
+# Stage 1: safety alignment (this is what creates the tax we then study).
+safety_align:
+  dataset_id: PKU-Alignment/PKU-SafeRLHF
+  split: train
+  n_examples: 8000
+  method: sft            # sft | dpo
+  epochs: 1
+  lr: 1.0e-5
+  batch_size: 8
+  grad_accum: 4
+
+# Stage 2: on-policy self-distillation.
+distill:
+  # Benign prompt pool. The student samples its own completions for these.
+  prompt_sources:
+    - {id: openai/gsm8k, config: main, split: train, n: 2000, field: question}
+    - {id: tatsu-lab/alpaca, split: train, n: 2000, field: instruction}
+  rollouts_per_prompt: 4       # K
+  temperature: 1.0
+  top_p: 0.95
+  max_new_tokens: 256
+  # on_policy_fraction = 1.0 is pure on-policy (student-sampled).
+  # 0.0 is pure off-policy (teacher-sampled). Sweep this for the key ablation.
+  on_policy_fraction: 1.0
+  kl_direction: forward        # forward | reverse | jsd
+  kl_topk: 0                   # 0 = full vocabulary; >0 truncates to save memory
+  steps: 1500
+  lr: 5.0e-6
+  batch_size: 4
+  grad_accum: 8
+  warmup_ratio: 0.03
+  max_grad_norm: 1.0
+  log_every: 25
+  save_every: 500
+  # LoRA keeps a 0.6B run on one consumer GPU, and the rank sweep is how we
+  # decouple "model size" from "adaptation capacity".
+  use_lora: true
+  lora_rank: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_targets: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+# Stage 3: evaluation. Capability suites measure the tax; safety suites make
+# sure we are not simply undoing the alignment.
+eval:
+  batch_size: 16
+  max_new_tokens: 320
+  temperature: 0.0
+  capability:
+    - {id: openai/gsm8k, config: main, split: test, n: 500, kind: exact_match}
+    - {id: cais/mmlu, config: all, split: test, n: 1000, kind: multiple_choice}
+    - {id: allenai/ai2_arc, config: ARC-Challenge, split: test, n: 500, kind: multiple_choice}
+  safety:
+    # Over-refusal: the quantity our mechanism hypothesis predicts will move.
+    - {id: walledai/XSTest, split: train, n: 450, kind: over_refusal}
+    # Genuine harm: this must NOT move, or the gain is just de-alignment.
+    - {id: walledai/AdvBench, split: train, n: 520, kind: harmful_compliance}
+
+# Stage 4: mechanistic probes.
+probes:
+  n_prompt_pairs: 256
+  layers: all                  # all | a list of layer indices
+  task_subspace_components: 8
